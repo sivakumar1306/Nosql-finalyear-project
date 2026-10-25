@@ -89,18 +89,35 @@ class HybridAnomalyDetector:
         rule_confidence = self._calculate_rule_confidence(rule_violations)
         
         # 2. Model-only detection (with borderline persistence)
-        model_result = self.model_detector.predict_with_persistence(
-            window_features, 
-            previous_results or []
-        )
+        model_available = self.model_detector.model is not None
+        if model_available:
+            model_result = self.model_detector.predict_with_persistence(
+                window_features,
+                previous_results or []
+            )
+        else:
+            # No trained model yet: report a neutral model result
+            model_result = {
+                "anomaly_score": 0.0,
+                "decision_score": None,
+                "is_borderline": False,
+                "borderline_score": None,
+                "consecutive_borderline_windows": 0,
+                "persistence_triggered": False,
+                "final_is_anomaly": False
+            }
         model_is_anomaly = model_result["final_is_anomaly"]
         model_confidence = model_result["anomaly_score"]
-        
+
         # 3. Hybrid detection based on voting strategy
-        hybrid_is_anomaly, hybrid_confidence = self._combine_detections(
-            rule_is_anomaly, rule_confidence,
-            model_is_anomaly, model_confidence
-        )
+        if model_available:
+            hybrid_is_anomaly, hybrid_confidence = self._combine_detections(
+                rule_is_anomaly, rule_confidence,
+                model_is_anomaly, model_confidence
+            )
+        else:
+            # Fall back to rule-only detection until a model is trained
+            hybrid_is_anomaly, hybrid_confidence = rule_is_anomaly, rule_confidence
         
         # Determine detection method for reporting
         detection_method = self._determine_detection_method(
@@ -213,17 +230,17 @@ class HybridAnomalyDetector:
                 if violation["operator"] in [">", ">="]:
                     # Value above threshold
                     if threshold > 0:
-                        excess_ratio = max(0, metric_value - threshold) / threshold
+                        distance_ratio = max(0, metric_value - threshold) / threshold
                     else:
-                        excess_ratio = 1.0 if metric_value > threshold else 0.0
+                        distance_ratio = 1.0 if metric_value > threshold else 0.0
                 else:  # "<" or "<="
                     # Value below threshold
                     if threshold > 0:
-                        deficit_ratio = max(0, threshold - metric_value) / threshold
+                        distance_ratio = max(0, threshold - metric_value) / threshold
                     else:
-                        deficit_ratio = 1.0 if metric_value < threshold else 0.0
-                
-                violation_confidence = min(1.0, excess_ratio if "excess_ratio" in locals() else deficit_ratio)
+                        distance_ratio = 1.0 if metric_value < threshold else 0.0
+
+                violation_confidence = min(1.0, distance_ratio)
             else:
                 # For rate changes, use fixed high confidence
                 violation_confidence = 0.8
@@ -356,14 +373,15 @@ class HybridAnomalyDetector:
         """
         if not self.recent_alerts:
             return False
-        
-        current_time = datetime.utcnow()
-        duplicate_window = current_time - timedelta(minutes=self.duplicate_window_minutes)
-        
+
+        # Compare window times (not wall-clock time) so batch re-processing
+        # of historical logs suppresses duplicates the same way as real-time
+        duplicate_window = timedelta(minutes=self.duplicate_window_minutes)
+
         # Check recent alerts for duplicates
         for alert in self.recent_alerts:
-            # Remove old alerts
-            if alert.get("detection_timestamp", current_time) < duplicate_window:
+            # Skip alerts outside the duplicate window
+            if abs(window_features.window_start - alert["window_start"]) > duplicate_window:
                 continue
             
             # Check for same service
@@ -408,9 +426,22 @@ class HybridAnomalyDetector:
         Returns:
             Document ID
         """
-        # Create AnomalyDetectionResult object
+        collection = db["anomaly_results"]
+        insert_result = collection.insert_one(self.build_result_document(detection_result))
+
+        return str(insert_result.inserted_id)
+
+    def build_result_document(self, detection_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build the MongoDB document for a detection result.
+
+        The document timestamp is the end of the analysed window (capped at the
+        detection time for real-time windows that are still open), so
+        time-range filters on the dashboard match when the anomaly happened.
+        """
+        detected_at = detection_result.get("detection_timestamp", datetime.utcnow())
         result = AnomalyDetectionResult(
-            timestamp=detection_result.get("detection_timestamp", datetime.utcnow()),
+            timestamp=min(detection_result["window_end"], detected_at),
             window_start=detection_result["window_start"],
             window_end=detection_result["window_end"],
             service_name=detection_result["service_name"],
@@ -428,15 +459,12 @@ class HybridAnomalyDetector:
                 "rule_confidence": detection_result.get("rule_confidence"),
                 "model_confidence": detection_result.get("model_confidence"),
                 "hybrid_confidence": detection_result.get("hybrid_confidence"),
-                "rule_violation_details": detection_result.get("rule_violation_details", [])
+                "rule_violation_details": detection_result.get("rule_violation_details", []),
+                "detected_at": detected_at
             }
         )
-        
-        # Save to database
-        collection = db["anomaly_results"]
-        insert_result = collection.insert_one(result.dict(by_alias=True))
-        
-        return str(insert_result.inserted_id)
+
+        return result.dict(by_alias=True)
     
     def get_performance_summary(self) -> Dict[str, Any]:
         """

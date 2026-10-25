@@ -7,6 +7,7 @@ from typing import Optional
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 import gridfs
+from bson import ObjectId
 from contextlib import contextmanager
 
 from models.mongodb_indexes import create_indexes
@@ -76,7 +77,7 @@ class DatabaseManager:
     
     def ensure_indexes(self):
         """Create all necessary indexes."""
-        if not self.db:
+        if self.db is None:
             raise RuntimeError("Database not connected")
         
         return create_indexes(self.db)
@@ -91,7 +92,7 @@ class DatabaseManager:
         Returns:
             MongoDB collection instance
         """
-        if not self.db:
+        if self.db is None:
             raise RuntimeError("Database not connected")
         
         return self.db[collection_name]
@@ -108,7 +109,7 @@ class DatabaseManager:
         Returns:
             GridFS file ID
         """
-        if not self.gridfs:
+        if self.gridfs is None:
             raise RuntimeError("GridFS not available")
         
         file_id = self.gridfs.put(
@@ -128,10 +129,10 @@ class DatabaseManager:
         Returns:
             Model as bytes
         """
-        if not self.gridfs:
+        if self.gridfs is None:
             raise RuntimeError("GridFS not available")
         
-        return self.gridfs.get(file_id).read()
+        return self.gridfs.get(ObjectId(file_id)).read()
     
     def delete_model_from_gridfs(self, file_id: str) -> bool:
         """
@@ -143,11 +144,11 @@ class DatabaseManager:
         Returns:
             True if deleted successfully
         """
-        if not self.gridfs:
+        if self.gridfs is None:
             raise RuntimeError("GridFS not available")
         
         try:
-            self.gridfs.delete(file_id)
+            self.gridfs.delete(ObjectId(file_id))
             return True
         except Exception as e:
             print(f"Failed to delete model from GridFS: {e}")
@@ -160,7 +161,7 @@ class DatabaseManager:
         Returns:
             Dictionary with database statistics
         """
-        if not self.db:
+        if self.db is None:
             raise RuntimeError("Database not connected")
         
         stats = {

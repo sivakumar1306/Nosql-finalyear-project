@@ -1,4 +1,4 @@
-  """
+"""
 MongoDB schema definitions for log data and anomaly detection.
 """
 
@@ -15,7 +15,8 @@ class PyObjectId(ObjectId):
         yield cls.validate
 
     @classmethod
-    def validate(cls, v):
+    def validate(cls, v, _info=None):
+        # Pydantic v2 passes a validation info argument, v1 does not
         if not ObjectId.is_valid(v):
             raise ValueError("Invalid objectid")
         return ObjectId(v)

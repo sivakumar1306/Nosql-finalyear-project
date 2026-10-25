@@ -25,7 +25,10 @@ class IsolationForestAnomalyDetector:
     - Configurable thresholds and persistence rules
     - Model versioning and metadata tracking
     """
-    
+
+    # Steepness of the decision score -> [0, 1] anomaly score mapping
+    SCORE_SCALE = 20.0
+
     def __init__(self, 
                  contamination: float = 0.1,
                  n_estimators: int = 100,
@@ -175,8 +178,10 @@ class IsolationForestAnomalyDetector:
         
         # Count consecutive borderline windows
         consecutive_borderline = 0
+        # previous_results are oldest first; stored anomaly_results documents
+        # carry borderline_score instead of is_borderline
         for result in reversed(previous_results):
-            if result.get("is_borderline", False):
+            if result.get("is_borderline", result.get("borderline_score") is not None):
                 consecutive_borderline += 1
             else:
                 break
@@ -337,9 +342,11 @@ class IsolationForestAnomalyDetector:
         # Isolation Forest decision scores are negative for anomalies
         # We want to map to [0, 1] where 1 is most anomalous
         
-        # Typical range is [-0.5, 0.5], but can vary
-        # Simple normalization: sigmoid-like transformation
-        normalized = 1 / (1 + np.exp(decision_score))
+        # Decision scores of real windows mostly fall in [-0.2, 0.2], with 0 at
+        # the contamination cut-off. A steep sigmoid keeps 0 at 0.5 and spreads
+        # that range over [0, 1], so only windows close to the cut-off land in
+        # the borderline band instead of nearly every normal window.
+        normalized = 1 / (1 + np.exp(self.SCORE_SCALE * decision_score))
         
         # Ensure it's in [0, 1]
         return max(0.0, min(1.0, normalized))

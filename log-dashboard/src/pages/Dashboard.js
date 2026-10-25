@@ -36,6 +36,8 @@ const Dashboard = () => {
   const {
     summary,
     serviceDetails,
+    logs,
+    anomalies,
     loading,
     filters,
     updateFilters,

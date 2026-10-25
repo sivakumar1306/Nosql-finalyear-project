@@ -12,6 +12,13 @@ from models.log_schema import WindowFeatures, AnomalyDetectionResult, DetectionR
 from ml.window_feature_extractor import WindowFeatureExtractor
 
 
+# Smallest baseline used for rate-change rules, so a jump from 0 to one
+# error is not reported as a huge relative spike
+RATE_CHANGE_MIN_BASELINE = {
+    "error_rate": 0.05,
+}
+
+
 class RuleEngine:
     """
     Rule-based anomaly detection engine.
@@ -291,7 +298,8 @@ class RuleEngine:
                 
                 if prev_values:
                     previous_value = np.mean(prev_values)
-                    rate_change = metric_value / max(previous_value, 0.001)  # Avoid division by zero
+                    baseline = max(previous_value, RATE_CHANGE_MIN_BASELINE.get(rule.metric, 0.001))  # Avoid division by zero
+                    rate_change = metric_value / baseline
                     violated = self._evaluate_threshold(rate_change, rule.operator, rule.threshold)
                 else:
                     violated = False
@@ -378,6 +386,9 @@ class RuleEngine:
         Returns:
             True if condition is met
         """
+        # Plain float so the result is a Python bool that MongoDB can store
+        value = float(value)
+
         if operator == ">":
             return value > threshold
         elif operator == "<":
@@ -440,7 +451,12 @@ class RuleEngine:
                 except Exception as e:
                     print(f"Failed to parse rule document: {e}")
                     continue
-            
+
+            if not rules:
+                # First run: keep the default rules and persist them
+                print("No rules in database, saving default rules")
+                return self.save_rules_to_db(db)
+
             self.rules = rules
             self._update_rule_cache()
             

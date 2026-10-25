@@ -113,7 +113,7 @@ def create_indexes(db):
     log_collection = db["log_entries"]
     for index in LOG_ENTRY_INDEXES:
         if isinstance(index[-1], dict):  # TTL index
-            log_collection.create_index(index[0], **index[1])
+            log_collection.create_index([index[0]], **index[1])
         else:
             log_collection.create_index(index)
     
@@ -121,7 +121,7 @@ def create_indexes(db):
     window_collection = db["window_features"]
     for index in WINDOW_FEATURES_INDEXES:
         if isinstance(index[-1], dict):  # TTL index
-            window_collection.create_index(index[0], **index[1])
+            window_collection.create_index([index[0]], **index[1])
         else:
             window_collection.create_index(index)
     
@@ -129,7 +129,7 @@ def create_indexes(db):
     anomaly_collection = db["anomaly_results"]
     for index in ANOMALY_RESULT_INDEXES:
         if isinstance(index[-1], dict):  # TTL index
-            anomaly_collection.create_index(index[0], **index[1])
+            anomaly_collection.create_index([index[0]], **index[1])
         else:
             anomaly_collection.create_index(index)
     

@@ -17,6 +17,7 @@ from ml.window_feature_extractor import WindowFeatureExtractor
 from ml.isolation_forest_model import IsolationForestAnomalyDetector
 from rules.rule_engine import RuleEngine
 from ml.hybrid_detector import HybridAnomalyDetector
+from ml.detection_pipeline import run_detection_pipeline, window_to_document
 import uuid
 
 
@@ -218,7 +219,7 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    db_status = "connected" if db_manager.db else "disconnected"
+    db_status = "connected" if db_manager.db is not None else "disconnected"
     model_status = "loaded" if model_detector and model_detector.model else "not_loaded"
     rule_status = "loaded" if rule_engine and rule_engine.rules else "not_loaded"
     
@@ -556,6 +557,71 @@ async def get_service_details(
         raise HTTPException(status_code=500, detail=f"Error fetching service details: {str(e)}")
 
 
+def detect_recent_window(db, service_name: str, hybrid_detector: HybridAnomalyDetector) -> Optional[Dict[str, Any]]:
+    """
+    Run hybrid detection on the most recent window of a service.
+
+    Persists the window and the detection result so the dashboard and
+    borderline persistence can use them. Returns None if the last minutes
+    do not contain enough traffic for a window.
+    """
+    recent_window = feature_extractor.extract_real_time(db, service_name, lookback_minutes=10)
+    if recent_window is None:
+        return None
+
+    # Previous windows and results, oldest first, for rate-change rules and persistence
+    previous_windows = [
+        WindowFeatures(**doc) for doc in reversed(list(db["window_features"].find(
+            {"service_name": service_name, "window_start": {"$lt": recent_window.window_start}},
+            sort=[("window_start", -1)],
+            limit=10
+        )))
+    ]
+    previous_results = list(reversed(list(db["anomaly_results"].find(
+        {"service_name": service_name},
+        sort=[("timestamp", -1)],
+        limit=10
+    ))))
+
+    detection_result = hybrid_detector.detect_anomaly(
+        window_features=recent_window,
+        previous_results=previous_results,
+        previous_windows=previous_windows,
+        track_latency=True
+    )
+
+    db["window_features"].insert_one(window_to_document(recent_window))
+    hybrid_detector.save_detection_result(db, detection_result)
+    return detection_result
+
+
+@app.post("/api/detection/run", response_model=Dict[str, Any])
+async def run_detection(
+    retrain: bool = Query(False, description="Train a new model version even if one is loaded"),
+    service_name: Optional[str] = Query(None, description="Only process this service"),
+    detectors: tuple = Depends(get_detectors)
+):
+    """
+    Run the full detection pipeline over the logs stored in MongoDB.
+
+    Builds rolling windows, trains the Isolation Forest if no model exists
+    yet, and stores rule/model/hybrid results for every window.
+    """
+    db = get_db()
+    _, _, hybrid_detector = detectors
+
+    try:
+        return run_detection_pipeline(
+            db,
+            hybrid_detector,
+            extractor=feature_extractor,
+            services=[service_name] if service_name else None,
+            retrain=retrain
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running detection: {str(e)}")
+
+
 @app.post("/api/logs", response_model=LogIngestionResponse)
 async def ingest_log(
     log_data: LogIngestionRequest,
@@ -596,36 +662,14 @@ async def ingest_log(
         message = "Log ingested successfully"
         
         # For high priority logs (ERRORs or high latency), trigger immediate detection
-        if (log_data.log_level.upper() == "ERROR" or 
+        if (log_data.log_level.upper() == "ERROR" or
             (log_data.response_time_ms and log_data.response_time_ms > 1000)):
             try:
-                # Extract window features for this service
-                feature_extractor = WindowFeatureExtractor()
-                recent_window = feature_extractor.extract_real_time(
-                    db, log_data.service_name, lookback_minutes=10
-                )
-                
-                if recent_window:
-                    # Get previous results for persistence tracking
-                    previous_results = list(db["anomaly_results"].find(
-                        {"service_name": log_data.service_name},
-                        sort=[("timestamp", -1)],
-                        limit=10
-                    ))
-                    
-                    # Run hybrid detection
-                    detection_result = hybrid_detector.detect_anomaly(
-                        window_features=recent_window,
-                        previous_results=previous_results,
-                        track_latency=True
-                    )
-                    
-                    if detection_result["final_is_anomaly"]:
-                        detection_triggered = True
-                        message = "Log ingested and anomaly detected"
-                        
-                        # Save detection result
-                        hybrid_detector.save_detection_result(db, detection_result)
+                detection_result = detect_recent_window(db, log_data.service_name, hybrid_detector)
+
+                if detection_result and detection_result["final_is_anomaly"]:
+                    detection_triggered = True
+                    message = "Log ingested and anomaly detected"
             except Exception as detection_error:
                 # Don't fail ingestion if detection fails
                 print(f"Detection error during ingestion: {detection_error}")
@@ -687,11 +731,23 @@ async def ingest_logs_batch(
         
         if log_entries:
             result = db["log_entries"].insert_many(log_entries)
-        
+
+        # Run real-time detection once per service in the batch
+        _, _, hybrid_detector = detectors
+        anomalies_detected = 0
+        for service_name in sorted({entry["service_name"] for entry in log_entries}):
+            try:
+                detection_result = detect_recent_window(db, service_name, hybrid_detector)
+                if detection_result and detection_result["final_is_anomaly"]:
+                    anomalies_detected += 1
+            except Exception as detection_error:
+                print(f"Detection error during batch ingestion: {detection_error}")
+
         return {
             "successful": successful,
             "failed": failed,
             "total": len(logs_data),
+            "anomalies_detected": anomalies_detected,
             "message": f"Batch ingestion completed: {successful} successful, {failed} failed"
         }
         
