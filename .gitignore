@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+
+# Dashboard dependencies (install with: npm install --legacy-peer-deps)
+node_modules/
+# Generated locally by npm install; not committed so pulls don't clash with local installs
+log-dashboard/package-lock.json
