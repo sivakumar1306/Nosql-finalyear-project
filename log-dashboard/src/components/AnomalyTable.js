@@ -19,11 +19,13 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import WarningIcon from '@mui/icons-material/Warning';
 import { useAnomaly } from '../contexts/AnomalyContext';
 import { format } from 'date-fns';
+import AnomalyDetailsDialog from './AnomalyDetailsDialog';
 
 const AnomalyTable = () => {
   const { anomalies, loading } = useAnomaly();
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(5);
+  const [selectedAnomaly, setSelectedAnomaly] = useState(null);
   
   if (loading.anomalies) {
     return (
@@ -173,7 +175,7 @@ const AnomalyTable = () => {
                 </TableCell>
                 <TableCell align="right">
                   <Tooltip title="View details">
-                    <IconButton size="small">
+                    <IconButton size="small" onClick={() => setSelectedAnomaly(row)}>
                       <VisibilityIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -207,6 +209,11 @@ const AnomalyTable = () => {
           </Typography>
         )}
       </Box>
+
+      <AnomalyDetailsDialog
+        anomaly={selectedAnomaly}
+        onClose={() => setSelectedAnomaly(null)}
+      />
     </Box>
   );
 };
