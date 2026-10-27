@@ -127,6 +127,37 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 - `GET /api/model/versions` - List model versions
 - `GET /api/rules` - List detection rules
 - `GET /api/metrics/window` - Window metrics for charts
+- `POST /api/detection/run` - Build windows and run detection over stored logs
+
+### AI Incident Investigation
+- `POST /api/incidents/investigate?anomaly_id=...` - Investigate the incident around an anomaly
+- `GET /api/incidents` - List stored incident reports
+- `GET /api/incidents/{id}` - Get one incident report
+- `POST /api/simulate/cascading-failure` - Simulate user-service → auth-service → payment-service failure
+
+## 🤖 AI Incident Investigator (Ollama)
+
+Starting from one anomaly, the investigator correlates anomalies of all services
+within ±15 minutes, rebuilds a per-minute timeline from the raw logs, ranks
+root-cause hypotheses using the service dependency map, and collects numbered
+evidence (E1, E2, ...) from MongoDB. A local LLM writes the incident report and
+must cite that evidence; the backend checks every citation, lists unsupported
+statements, and flags state-changing suggestions (restart, delete, ...) as
+requiring human approval. The investigator only reads data and never executes
+actions. Reports are stored in the `incident_reports` collection.
+
+Setup:
+```bash
+ollama pull llama3.2      # or any model you have
+ollama serve              # usually already running
+```
+Optional environment variables for the backend: `OLLAMA_URL` (default
+`http://localhost:11434`), `OLLAMA_MODEL` (default `llama3.2`),
+`OLLAMA_TIMEOUT_SECONDS` (default 180). Without Ollama, the data-driven part of
+the report (timeline, hypotheses, evidence, steps) still works.
+
+In the dashboard: click the flask icon to simulate a cascading failure, open an
+anomaly with the eye icon, then click **Investigate with AI**.
 
 ## 🧪 Testing
 

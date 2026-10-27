@@ -18,6 +18,9 @@ from ml.isolation_forest_model import IsolationForestAnomalyDetector
 from rules.rule_engine import RuleEngine
 from ml.hybrid_detector import HybridAnomalyDetector
 from ml.detection_pipeline import run_detection_pipeline, window_to_document
+from ml.incident_investigator import investigate
+from ml.incident_simulator import simulate_cascading_failure
+from bson import ObjectId
 import uuid
 
 
@@ -621,6 +624,94 @@ async def run_detection(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error running detection: {str(e)}")
+
+
+@app.post("/api/simulate/cascading-failure", response_model=Dict[str, Any])
+def simulate_cascade(detectors: tuple = Depends(get_detectors)):
+    """
+    Simulate a cascading failure for demos.
+
+    Writes logs in which user-service slows down first and auth-service and
+    payment-service fail afterwards, then runs real-time detection on each.
+    """
+    db = get_db()
+    _, _, hybrid_detector = detectors
+
+    try:
+        simulation = simulate_cascading_failure(db)
+        detected = {}
+        latest_anomaly_id = None
+        for service_name in simulation["logs_written"]:
+            result = detect_recent_window(db, service_name, hybrid_detector)
+            detected[service_name] = bool(result and result["final_is_anomaly"])
+        latest = db["anomaly_results"].find_one(
+            {"is_anomaly": True, "service_name": {"$in": list(detected)}},
+            sort=[("metadata.detected_at", -1)]
+        )
+        if latest:
+            latest_anomaly_id = str(latest["_id"])
+        return {**simulation, "anomalies_detected": detected, "latest_anomaly_id": latest_anomaly_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running simulation: {str(e)}")
+
+
+def _report_to_json(report: Dict[str, Any]) -> Dict[str, Any]:
+    report["_id"] = str(report["_id"])
+    return report
+
+
+@app.post("/api/incidents/investigate", response_model=Dict[str, Any])
+def investigate_incident(
+    anomaly_id: str = Query(..., description="ID of the anomaly to start the investigation from"),
+    use_llm: bool = Query(True, description="Ask the local Ollama model to write the report narrative")
+):
+    """
+    Investigate the incident around an anomaly.
+
+    Correlates anomalies across services, rebuilds the timeline from the logs,
+    ranks root-cause hypotheses with evidence, and (optionally) has a local
+    LLM write the report. Read-only: nothing is executed on the system.
+    """
+    db = get_db()
+
+    if not ObjectId.is_valid(anomaly_id):
+        raise HTTPException(status_code=400, detail="Invalid anomaly id")
+    seed = db["anomaly_results"].find_one({"_id": ObjectId(anomaly_id)})
+    if seed is None:
+        raise HTTPException(status_code=404, detail="Anomaly not found")
+
+    try:
+        report = investigate(db, seed, use_llm=use_llm)
+        db["incident_reports"].insert_one(report)
+        return _report_to_json(report)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error investigating incident: {str(e)}")
+
+
+@app.get("/api/incidents", response_model=List[Dict[str, Any]])
+def list_incidents(limit: int = Query(20, ge=1, le=100)):
+    """List recent incident reports (summary fields only)."""
+    db = get_db()
+    cursor = db["incident_reports"].find(
+        {},
+        projection={"created_at": 1, "severity": 1, "status": 1, "seed_anomaly_id": 1,
+                    "affected_services.service": 1, "hypotheses": {"$slice": 1}, "llm.used": 1},
+        sort=[("created_at", -1)],
+        limit=limit
+    )
+    return [_report_to_json(doc) for doc in cursor]
+
+
+@app.get("/api/incidents/{incident_id}", response_model=Dict[str, Any])
+def get_incident(incident_id: str):
+    """Get a stored incident report."""
+    db = get_db()
+    if not ObjectId.is_valid(incident_id):
+        raise HTTPException(status_code=400, detail="Invalid incident id")
+    report = db["incident_reports"].find_one({"_id": ObjectId(incident_id)})
+    if report is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return _report_to_json(report)
 
 
 @app.post("/api/logs", response_model=LogIngestionResponse)

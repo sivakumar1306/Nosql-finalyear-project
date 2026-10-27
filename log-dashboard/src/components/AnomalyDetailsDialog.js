@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -19,6 +19,7 @@ import {
   Paper,
 } from '@mui/material';
 import { format } from 'date-fns';
+import IncidentReportDialog from './IncidentReportDialog';
 
 const METHOD_DESCRIPTIONS = {
   hybrid_both: 'Both the rule engine and the Isolation Forest model flagged this window.',
@@ -71,6 +72,8 @@ const ScoreItem = ({ label, value }) => (
 );
 
 const AnomalyDetailsDialog = ({ anomaly, onClose }) => {
+  const [investigating, setInvestigating] = useState(false);
+
   if (!anomaly) return null;
 
   const metadata = anomaly.metadata || {};
@@ -167,8 +170,17 @@ const AnomalyDetailsDialog = ({ anomaly, onClose }) => {
       </DialogContent>
 
       <DialogActions>
+        <Button variant="contained" onClick={() => setInvestigating(true)}>
+          Investigate with AI
+        </Button>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
+
+      <IncidentReportDialog
+        anomalyId={anomaly._id}
+        open={investigating}
+        onClose={() => setInvestigating(false)}
+      />
     </Dialog>
   );
 };

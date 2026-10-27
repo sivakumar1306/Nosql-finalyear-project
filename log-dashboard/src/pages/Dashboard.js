@@ -24,7 +24,9 @@ import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import InfoIcon from '@mui/icons-material/Info';
+import ScienceIcon from '@mui/icons-material/Science';
 import { useAnomaly } from '../contexts/AnomalyContext';
+import { apiService } from '../services/api';
 import { useSnackbar } from 'notistack';
 import AnomalyTable from '../components/AnomalyTable';
 import LogTable from '../components/LogTable';
@@ -73,6 +75,28 @@ const Dashboard = () => {
   const handleRefresh = () => {
     refreshAll();
     enqueueSnackbar('Data refreshed', { variant: 'success' });
+  };
+
+  const [simulating, setSimulating] = useState(false);
+
+  // Inject a cascading failure (user-service -> auth-service -> payment-service)
+  const handleSimulateCascade = async () => {
+    setSimulating(true);
+    try {
+      const response = await apiService.simulateCascadingFailure();
+      const detected = Object.entries(response.data.anomalies_detected)
+        .filter(([, isAnomaly]) => isAnomaly)
+        .map(([service]) => service);
+      enqueueSnackbar(
+        `Cascading failure simulated. Anomalies detected in: ${detected.join(', ') || 'none'}. Open one and click "Investigate with AI".`,
+        { variant: 'warning', autoHideDuration: 8000 }
+      );
+      refreshAll();
+    } catch (error) {
+      enqueueSnackbar(`Simulation failed: ${error.response?.data?.detail || error.message}`, { variant: 'error' });
+    } finally {
+      setSimulating(false);
+    }
   };
   
   const toggleAutoRefresh = () => {
@@ -161,6 +185,14 @@ const Dashboard = () => {
               </Select>
             </FormControl>
             
+            <Tooltip title="Simulate cascading failure (user-service → auth-service → payment-service)">
+              <span>
+                <IconButton onClick={handleSimulateCascade} disabled={simulating} color="warning">
+                  <ScienceIcon />
+                </IconButton>
+              </span>
+            </Tooltip>
+
             <Tooltip title="Refresh data">
               <IconButton onClick={handleRefresh} disabled={loading.summary}>
                 <RefreshIcon />

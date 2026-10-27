@@ -66,6 +66,15 @@ export const apiService = {
   // Anomalies
   getAnomalies: (params) => api.get('/api/anomalies', { params }),
 
+  // Incident investigation (the local LLM can take a while on CPU)
+  investigateIncident: (anomalyId, useLlm = true) =>
+    api.post('/api/incidents/investigate', null, {
+      params: { anomaly_id: anomalyId, use_llm: useLlm },
+      timeout: 240000,
+    }),
+  getIncidents: (limit = 20) => api.get('/api/incidents', { params: { limit } }),
+  simulateCascadingFailure: () => api.post('/api/simulate/cascading-failure'),
+
   // Model
   getModelVersions: (limit = 10) =>
     api.get('/api/model/versions', { params: { limit } }),

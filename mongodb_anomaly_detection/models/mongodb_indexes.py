@@ -100,6 +100,13 @@ DETECTION_RULE_INDEXES = [
 ]
 
 
+INCIDENT_REPORT_INDEXES = [
+    # Incident history, newest first
+    [("created_at", DESCENDING)],
+    [("severity", ASCENDING), ("created_at", DESCENDING)],
+]
+
+
 def create_indexes(db):
     """
     Create all necessary indexes in the MongoDB database.
@@ -142,6 +149,11 @@ def create_indexes(db):
     rule_collection = db["detection_rules"]
     for index in DETECTION_RULE_INDEXES:
         rule_collection.create_index(index)
+    
+    # Incident reports collection
+    incident_collection = db["incident_reports"]
+    for index in INCIDENT_REPORT_INDEXES:
+        incident_collection.create_index(index)
     
     print("MongoDB indexes created successfully.")
     return True
