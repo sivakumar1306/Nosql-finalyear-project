@@ -27,7 +27,7 @@ class SummaryResponse(BaseModel):
     total_logs: int = Field(..., description="Total number of log entries")
     total_anomalies: int = Field(..., description="Total number of detected anomalies")
     services: List[str] = Field(..., description="List of unique service names")
-    time_range: Dict[str, datetime] = Field(..., description="Earliest and latest timestamps")
+    time_range: Dict[str, Optional[datetime]] = Field(..., description="Earliest and latest timestamps (null when no logs match)")
     anomaly_rate: float = Field(..., description="Percentage of logs that are anomalies")
     recent_anomalies: int = Field(..., description="Anomalies in the last 24 hours")
     
@@ -427,7 +427,8 @@ async def get_service_details(
         # Get total logs for this service
         total_logs = db["log_entries"].count_documents(time_filter)
         
-        if total_logs == 0:
+        # Unknown service -> 404; a known service with no logs in the range returns zeros
+        if total_logs == 0 and db["log_entries"].count_documents({"service_name": service_name}, limit=1) == 0:
             raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
         
         # Get anomaly statistics
