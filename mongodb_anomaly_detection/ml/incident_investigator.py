@@ -56,8 +56,9 @@ CHECKS_BY_SIGNAL = {
 
 # Words that indicate a state-changing action; such suggestions need a human
 DESTRUCTIVE_PATTERN = re.compile(
-    r"\b(restart|reboot|kill|terminate|delete|drop|truncate|rm\s+-rf|shut\s*down|"
-    r"rollback|roll\s+back|scale\s+down|purge|wipe|flush|disable)\b",
+    r"\b(restart\w*|reboot\w*|kill\w*|terminat\w*|delet\w*|truncat\w*|purg\w*|wip(?:e|ed|ing)|"
+    r"flush\w*|disabl\w*|redeploy\w*|rm\s+-rf|drop\s+(?:table|database|collection)|"
+    r"shut(?:ting)?\s*down|roll(?:ing)?\s*back|rollback|scal(?:e|ing)\s+down)\b",
     re.IGNORECASE,
 )
 
@@ -129,20 +130,40 @@ def _minute_series(db, service: str, start: datetime, end: datetime) -> List[Dic
     ]))
 
 
-def _find_onset(series: List[Dict[str, Any]], baseline: Dict[str, float]) -> Optional[Dict[str, Any]]:
-    """First minute whose errors or latency clearly depart from the baseline."""
+ONSET_MIN_ERRORS = 3
+ONSET_SUSTAINED_MINUTES = 2
+
+
+def _abnormal_signal(minute: Dict[str, Any], baseline: Dict[str, float]) -> Optional[Dict[str, Any]]:
+    """Return the signal if this minute clearly departs from the baseline."""
+    if minute["requests"] < 2:
+        return None
     base_error = baseline.get("error_rate") or 0.0
     base_latency = baseline.get("avg_response_time_ms") or 0.0
+    error_rate = minute["errors"] / minute["requests"]
+    latency = minute["avg_response_time_ms"] or 0.0
+    if minute["errors"] >= ONSET_MIN_ERRORS and error_rate >= max(0.3, 5 * base_error):
+        return {"time": minute["_id"], "signal": "errors", "value": error_rate}
+    if base_latency and latency >= 3 * base_latency:
+        return {"time": minute["_id"], "signal": "latency", "value": latency}
+    return None
 
-    for minute in series:
-        if minute["requests"] < 2:
+
+def _find_onset(series: List[Dict[str, Any]], baseline: Dict[str, float]) -> Optional[Dict[str, Any]]:
+    """
+    First minute of a sustained departure from the baseline.
+
+    A single noisy minute (a couple of errors in normal traffic) is ignored:
+    the abnormal state must last ONSET_SUSTAINED_MINUTES consecutive minutes,
+    unless it starts in the most recent minute of data.
+    """
+    signals = [_abnormal_signal(minute, baseline) for minute in series]
+    for i, signal in enumerate(signals):
+        if signal is None:
             continue
-        error_rate = minute["errors"] / minute["requests"]
-        latency = minute["avg_response_time_ms"] or 0.0
-        if error_rate >= max(0.25, 3 * base_error):
-            return {"time": minute["_id"], "signal": "errors", "value": error_rate}
-        if base_latency and latency >= 3 * base_latency:
-            return {"time": minute["_id"], "signal": "latency", "value": latency}
+        run = signals[i:i + ONSET_SUSTAINED_MINUTES]
+        if all(run) and (len(run) == ONSET_SUSTAINED_MINUTES or i == len(signals) - 1):
+            return signal
     return None
 
 
@@ -409,21 +430,24 @@ def severity_of(incident: Dict[str, Any]) -> str:
 
 
 def build_prompt(facts: Dict[str, Any]) -> str:
+    conclusion = facts["conclusion"]
+    first_evidence = conclusion["evidence"][0]
     return (
-        "You are an incident investigator for a microservice platform. Write an "
-        "incident report from the FACTS below only.\n"
-        "Rules:\n"
-        "- Every sentence that states a finding must cite evidence IDs in square "
-        "brackets, e.g. [E2] or [E1, E4]. Only use IDs that appear in the facts.\n"
-        "- Do not invent services, numbers, errors or causes that are not in the facts. "
-        "If something is uncertain, say so.\n"
-        "- You cannot run commands. Recommend only read-only investigation steps; "
-        "anything that changes the system (restarts, rollbacks, deletions) must be "
-        "written as a proposal for an engineer to approve.\n\n"
-        "Use exactly these headings:\n"
-        "Summary\nRoot cause analysis\nImpact\nRecommended next steps\n\n"
-        "Keep it under 250 words.\n\n"
-        f"FACTS:\n{json.dumps(facts, indent=2, default=str)}"
+        "You are an incident investigator for a microservice platform. The analysis "
+        "below was computed from the system's logs. Explain it to an engineer.\n\n"
+        "STRICT RULES:\n"
+        "1. End EVERY sentence with the evidence IDs that support it in square brackets, "
+        f"for example: \"{conclusion['service']} degraded first [{first_evidence}].\"\n"
+        "2. Use only facts, numbers and evidence IDs from the FACTS. Never invent anything.\n"
+        f"3. The root cause is the CONCLUSION ({conclusion['title']}). Explain why, using "
+        "its reasoning and evidence. Mention alternatives only if they are in the facts.\n"
+        "4. Next steps must be specific read-only checks on a named service, each with "
+        "evidence IDs. No generic advice (no monitoring plans, no recovery plans).\n"
+        "5. You cannot run commands. Never tell anyone to restart, roll back, delete or "
+        "change anything.\n\n"
+        "Write exactly these four headings, each followed by 1-3 short sentences:\n"
+        "Summary\nRoot cause\nImpact\nNext steps\n\n"
+        f"FACTS:\n{json.dumps(facts, indent=1, default=str)}"
     )
 
 
@@ -455,9 +479,15 @@ def call_ollama(prompt: str) -> str:
 def validate_narrative(text: str, evidence_ids: set) -> Dict[str, Any]:
     """Check citations and flag destructive suggestions in the LLM output."""
     cited = set(re.findall(r"E\d+", " ".join(re.findall(r"\[([^\]]+)\]", text))))
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if len(s.strip()) > 20]
-    uncited = [s for s in sentences if not re.search(r"\[E\d+", s)
-               and not s.rstrip(":").lower() in {"summary", "impact", "root cause analysis", "recommended next steps"}]
+    uncited = []
+    for line in text.splitlines():
+        # Drop markdown decoration (bullets, numbering, bold, headings)
+        plain = re.sub(r"^[\s#>*\-\d.)]+|\*\*|__", "", line).strip()
+        if not plain or plain.endswith(":") or len(plain) < 25:
+            continue  # headings, labels and fragments
+        for sentence in re.split(r"(?<=[.!?])\s+", plain):
+            if len(sentence) >= 25 and not re.search(r"\[E\d+", sentence):
+                uncited.append(sentence)
     destructive = sorted({m.group(0).lower() for m in DESTRUCTIVE_PATTERN.finditer(text)})
     return {
         "cited_evidence": sorted(cited & evidence_ids, key=lambda e: int(e[1:])),
@@ -500,14 +530,19 @@ def investigate(db, seed: Dict[str, Any], use_llm: bool = True) -> Dict[str, Any
     }
 
     if use_llm:
+        # Compact facts: small local models follow short prompts more reliably
         facts = {
             "severity": report["severity"],
-            "affected_services": report["affected_services"],
-            "timeline": [{**t, "time": _fmt(t["time"])} for t in incident["timeline"]],
-            "root_cause_hypotheses": hypotheses,
+            "conclusion": hypotheses[0] if hypotheses else None,
+            "alternative_hypotheses": [
+                {k: h[k] for k in ("title", "confidence", "evidence")} for h in hypotheses[1:]
+            ],
+            "timeline": [
+                f"{_fmt(t['time'])} {t['event']} [{', '.join(t['evidence'])}]"
+                for t in incident["timeline"]
+            ],
             "service_dependencies": report["service_dependencies"],
-            "evidence": [{"id": e["id"], "service": e["service"], "description": e["description"]}
-                         for e in evidence],
+            "evidence": {e["id"]: f"{e['service']}: {e['description']}" for e in evidence},
         }
         try:
             narrative = call_ollama(build_prompt(facts))
