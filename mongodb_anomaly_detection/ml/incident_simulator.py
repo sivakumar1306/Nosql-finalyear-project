@@ -61,30 +61,38 @@ LOG_FACTORIES = {
 }
 
 
-def simulate_cascading_failure(db, seed: int = None) -> Dict[str, Any]:
-    """Insert the cascading-failure logs and return what was written per service."""
-    rng = random.Random(seed)
-    now = datetime.utcnow()
-    written: Dict[str, int] = {}
-    documents: List[Dict[str, Any]] = []
+def build_cascade_logs(end: datetime, rng: random.Random, steps=CASCADE_STEPS) -> List[Dict[str, Any]]:
+    """
+    Cascading-failure logs ending at `end`.
 
-    for service, start_minutes in CASCADE_STEPS:
-        count = start_minutes * REQUESTS_PER_MINUTE
-        for i in range(count):
-            timestamp = now - timedelta(minutes=start_minutes) + timedelta(seconds=i * 60 / REQUESTS_PER_MINUTE)
+    `steps` lists (service, minutes before `end` its failure starts) in cascade order.
+    """
+    documents: List[Dict[str, Any]] = []
+    for service, start_minutes in steps:
+        for i in range(start_minutes * REQUESTS_PER_MINUTE):
+            timestamp = end - timedelta(minutes=start_minutes) + timedelta(seconds=i * 60 / REQUESTS_PER_MINUTE)
             fields = LOG_FACTORIES[service](rng)
             fields["response_time_ms"] = round(fields["response_time_ms"], 1)
             log = LogEntry(
                 timestamp=timestamp,
                 service_name=service,
                 http_method="POST" if "payment" in fields["endpoint"] or "token" in fields["endpoint"] else "GET",
-                metadata={"simulation": "cascading_failure"},
+                metadata={"simulation": "cascading_failure", "scenario": "cascading_failure"},
                 **fields,
             )
             documents.append(log.dict(by_alias=True))
-        written[service] = count
+    return documents
 
+
+def simulate_cascading_failure(db, seed: int = None) -> Dict[str, Any]:
+    """Insert the cascading-failure logs and return what was written per service."""
+    now = datetime.utcnow()
+    documents = build_cascade_logs(now, random.Random(seed))
     db["log_entries"].insert_many(documents)
+
+    written: Dict[str, int] = {}
+    for doc in documents:
+        written[doc["service_name"]] = written.get(doc["service_name"], 0) + 1
     return {
         "scenario": "cascading_failure",
         "description": "user-service database slows down, then auth-service and payment-service fail calling it",
