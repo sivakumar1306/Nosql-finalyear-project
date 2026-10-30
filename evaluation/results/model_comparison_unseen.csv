@@ -1,0 +1,5 @@
+unseen_incident_type,recall: Random Forest (supervised),recall: Isolation Forest (ours),recall: Hybrid rules + IF (ours),recall: Rules only (ours),Random Forest overall F1
+latency_spike,1.0,1.0,1.0,1.0,0.9285714285714285
+gradual_degradation,0.8421052631578947,0.8771929824561403,0.7017543859649122,0.6549707602339181,0.9265536723163842
+error_burst,0.0,0.8493150684931506,0.821917808219178,0.8356164383561644,0.8403614457831325
+traffic_drop,0.0,0.84375,0.6875,0.3125,0.8936781609195403

@@ -128,20 +128,46 @@ Environment variables for the backend: `OLLAMA_MODEL` (default `llama3.2`), `OLL
 4. **AI investigation:** click the flask icon, open the newest anomaly, click **Investigate with AI**.
    Expected root cause: *Cascading failure originating in user-service*.
 
-## Results (demo data)
+## Results
 
-- All 4 injected incidents detected.
-- Window-level evaluation over 3 randomly generated datasets (3,165 windows):
+Evaluated on 5 labelled demo runs (5,272 windows, 375 anomalous). Reproduce with
+`python evaluation/model_comparison.py` and `python evaluation/investigation_eval.py`
+(both need MongoDB and replace the data in `anomaly_detection`).
 
-| Detector | Precision | Recall | F1 | False alarms |
-|---|---|---|---|---|
-| Rules only | 0.89 | 0.74 | 0.81 | 20 |
-| Isolation Forest only | 0.64 | 0.90 | 0.75 | 115 |
-| **Hybrid** | **0.93** | **0.78** | **0.85** | **13** |
+**Comparison with Random Forest and other models.** Our detectors and LOF / One-Class SVM use no
+labels; Random Forest is trained on the labelled windows of the other 4 runs (4,218 windows).
 
-- Detection takes about 15–25 ms per window; training takes under a second on a laptop CPU.
-- The cascading-failure investigation ranked user-service as the root cause (97–99% confidence)
-  in 5 out of 5 runs with different background data.
+| Model | Labels | Precision | Recall | F1 | Accuracy | False alarms |
+|---|---|---|---|---|---|---|
+| Rules only (ours) | no | 0.901 | 0.752 | 0.820 | 0.976 | 31 |
+| Isolation Forest (ours) | no | 0.638 | 0.901 | 0.747 | 0.957 | 192 |
+| **Hybrid (ours)** | **no** | **0.950** | **0.803** | **0.870** | **0.983** | **16** |
+| Random Forest | yes | 0.963 | 0.901 | 0.931 | 0.991 | 13 |
+| Local Outlier Factor | no | 0.317 | 0.448 | 0.371 | 0.892 | 362 |
+| One-Class SVM | no | 0.521 | 0.731 | 0.608 | 0.933 | 252 |
+
+**Incident types never seen in training** (recall on that type when it is removed from Random
+Forest's training data):
+
+| Unseen type | Random Forest | Isolation Forest (ours) | Hybrid (ours) |
+|---|---|---|---|
+| Latency spike | 1.000 | 1.000 | 1.000 |
+| Gradual slowdown | 0.842 | 0.877 | 0.702 |
+| Error burst | **0.000** | **0.849** | 0.822 |
+| Traffic drop | **0.000** | **0.844** | 0.688 |
+
+Random Forest is best only when it has labelled examples of every incident type; it misses all
+error bursts and traffic drops it was not trained on. Our detectors need no labels, keep detecting
+new failure types, and explain every alert. Among label-free methods the hybrid is clearly best.
+
+**Other results**
+- All 4 injected incidents are detected in every run.
+- The investigator ranked user-service as the root cause of the cascading failure, with the correct
+  failure order, in 5 of 5 runs (97–99% confidence).
+- Detection takes about 11–25 ms per window; training takes under a second on a laptop CPU.
+
+The project paper (IEEE format) is in `docs/report/IEEE_Report.pdf`; rebuild it with
+`python docs/report/build_ieee_report.py`.
 
 ## API
 
@@ -178,7 +204,11 @@ Environment variables for the backend: `OLLAMA_MODEL` (default `llama3.2`), `OLL
 │       ├── detection_pipeline.py
 │       ├── incident_investigator.py   # AI incident investigation
 │       └── incident_simulator.py      # cascading-failure simulation
-├── evaluation/                  # evaluation scripts
+├── evaluation/
+│   ├── model_comparison.py      # ours vs Random Forest, LOF, One-Class SVM
+│   ├── investigation_eval.py    # root-cause accuracy on cascading failures
+│   └── results/                 # CSV results
+├── docs/report/                 # IEEE paper (.docx/.pdf), figures, build scripts
 └── log-dashboard/               # React dashboard
     └── src/{components,contexts,pages,services}
 ```
@@ -196,7 +226,8 @@ Environment variables for the backend: `OLLAMA_MODEL` (default `llama3.2`), `OLL
 
 ## Limitations and future work
 
-- Evaluation uses generated data with injected incidents.
+- Evaluation uses generated data with injected incidents; a supervised Random Forest scores higher
+  when labelled examples of every incident type are available.
 - The dashboard polls every 30 seconds (no WebSocket push).
 - No authentication on the API.
 - Small local models may omit citations; the report highlights such sentences.

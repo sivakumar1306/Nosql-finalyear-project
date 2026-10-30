@@ -6,3 +6,6 @@ __pycache__/
 node_modules/
 # Generated locally by npm install; not committed so pulls don't clash with local installs
 log-dashboard/package-lock.json
+
+# Dashboard production build
+log-dashboard/build/
