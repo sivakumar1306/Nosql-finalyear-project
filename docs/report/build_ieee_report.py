@@ -26,9 +26,11 @@ OUT = os.path.join(HERE, "IEEE_Report.docx")
 
 TITLE = ("Hybrid Rule and Isolation Forest Anomaly Detection for Microservice Logs on MongoDB "
          "with Evidence-Grounded LLM Incident Investigation")
+# (name, role line, email or None)
 AUTHORS = [
-    ("G Sivakumar", "23BCE1834"),
-    ("Afzal Ahamed A", "23BCE1868"),
+    ("G Sivakumar", "Reg. No. 23BCE1834", "sivakumar.g2023@vitstudent.ac.in"),
+    ("Afzal Ahamed A", "Reg. No. 23BCE1868", "afzalahamed.a2023@vitstudent.ac.in"),
+    ("Manjula V", "Associate Professor Senior (Guide)", None),
 ]
 AFFILIATION = ["School of Computer Science and Engineering", "Vellore Institute of Technology",
                "Chennai, India"]
@@ -94,14 +96,17 @@ class Paper:
 
         table = self.doc.add_table(rows=1, cols=len(AUTHORS))
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        for cell, (name, reg) in zip(table.rows[0].cells, AUTHORS):
+        for cell, (name, role, email) in zip(table.rows[0].cells, AUTHORS):
             first = cell.paragraphs[0]
             first.alignment = WD_ALIGN_PARAGRAPH.CENTER
             self._run(first, name, size=11)
-            for line, italic in [(f"Reg. No. {reg}", False)] + [(a, True) for a in AFFILIATION]:
+            lines = [(role, False, 9.5)] + [(a, True, 9.5) for a in AFFILIATION]
+            if email:
+                lines.append((email, False, 9))
+            for line, italic, size in lines:
                 para = cell.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                self._run(para, line, size=10, italic=italic)
+                self._run(para, line, size=size, italic=italic)
         spacer = self.doc.add_paragraph()
         spacer.paragraph_format.space_after = Pt(6)
 
