@@ -262,6 +262,12 @@ class Paper:
                 self._run(cell.paragraphs[0], str(value), size=7.5, bold=(r == 0 or (r - 1) in bold_rows))
                 if widths:
                     cell.width = widths[k]
+                # Keep every row with the next so the table never splits across pages
+                if r < len(rows):
+                    cell.paragraphs[0].paragraph_format.keep_with_next = True
+            row_props = table.rows[r]._tr.get_or_add_trPr()
+            cant_split = OxmlElement("w:cantSplit")
+            row_props.append(cant_split)
         after = self.doc.add_paragraph()
         after.paragraph_format.space_after = Pt(6)
         return self.table_no
@@ -625,7 +631,7 @@ def build():
            "user service degraded first, both dependent services failed afterwards, and their error "
            "messages name it. An earlier version took a single noisy minute as the onset and blamed the "
            "authentication service; requiring two consecutive abnormal minutes removed this error.")
-    p.wide_figure("investigation.png", "Incident investigation of a simulated cascading failure: ranked "
+    p.figure("investigation.png", "Incident investigation of a simulated cascading failure: ranked "
              "root-cause hypotheses with evidence identifiers and the reconstructed timeline.")
     p.para("With the 3-billion-parameter llama3.2 model, reports followed the requested structure but "
            "sometimes omitted citations or suggested generic actions such as restarting services. The "
