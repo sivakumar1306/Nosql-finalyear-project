@@ -280,6 +280,43 @@ class Paper:
             r.paragraph_format.space_after = Pt(1)
             self._run(r, f"[{i}] {ref}", size=8)
 
+    def _hyperlink(self, paragraph, url, size=9):
+        """Clickable link run (python-docx has no direct API for hyperlinks)."""
+        r_id = paragraph.part.relate_to(
+            url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            is_external=True)
+        link = OxmlElement("w:hyperlink")
+        link.set(qn("r:id"), r_id)
+        run = OxmlElement("w:r")
+        props = OxmlElement("w:rPr")
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), "0563C1")
+        underline = OxmlElement("w:u")
+        underline.set(qn("w:val"), "single")
+        font_size = OxmlElement("w:sz")
+        font_size.set(qn("w:val"), str(int(size * 2)))
+        props.extend([color, underline, font_size])
+        text = OxmlElement("w:t")
+        text.text = url
+        run.extend([props, text])
+        link.append(run)
+        paragraph._p.append(link)
+
+    def appendix(self, title, intro, items):
+        """Unnumbered appendix with labelled links, placed after the references."""
+        p = self.doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(10)
+        p.paragraph_format.space_after = Pt(4)
+        self._run(p, title, small_caps=True)
+        self.para(intro)
+        for label, url in items:
+            item = self.doc.add_paragraph()
+            item.paragraph_format.space_before = Pt(3)
+            item.paragraph_format.left_indent = Inches(0.1)
+            self._run(item, f"{label}: ", size=9, bold=True)
+            self._hyperlink(item, url)
+
     def save(self):
         self.doc.save(OUT)
         return OUT
@@ -661,6 +698,17 @@ def build():
         "Z. Ji et al., “Survey of hallucination in natural language generation,” ACM Computing "
         "Surveys, vol. 55, no. 12, 2023.",
     ])
+    p.appendix(
+        "Appendix: Drive Link",
+        "The project folder contains the complete source code, the demonstration video of the "
+        "working system from log ingestion to AI incident investigation, and the user manual that "
+        "explains how to install and run it. The folder is shared so that anyone with the link can "
+        "view it.",
+        [
+            ("Drive folder (code, demo video, user manual)",
+             "https://drive.google.com/drive/folders/1YvUnh0IvpU9PN5cbIb2BNfOtxddi_WOl"),
+            ("Source code repository", "https://github.com/sivakumar1306/Nosql-finalyear-project"),
+        ])
     return p.save()
 
 
