@@ -29,7 +29,7 @@ TITLE = ("Hybrid Rule and Isolation Forest Anomaly Detection for Microservice Lo
 # (name, role line, email or None)
 AUTHORS = [
     ("G Sivakumar", "Reg. No. 23BCE1834", "sivakumar.g2023@vitstudent.ac.in"),
-    ("Afzal Ahamed A", "Reg. No. 23BCE1868", "afzalahamed.a2023@vitstudent.ac.in"),
+    ("Afzal Ahamed A", "Reg. No. 23BCE1353", "afzalahamed.a2023@vitstudent.ac.in"),
     ("Manjula V", "Associate Professor Senior (Guide)", None),
 ]
 AFFILIATION = ["School of Computer Science and Engineering", "Vellore Institute of Technology",
